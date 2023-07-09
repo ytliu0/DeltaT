@@ -271,7 +271,7 @@ def DeltaT_hybrid_with_error_estimate(jd):
         dT = round(dT, 2)
     else:
        dT = round(dT,6)
-    return str(dT)+u' \u00B1 '+np.format_float_positional(eps, 2)+' seconds'
+    return str(dT)+u' \u00B1 '+np.format_float_positional(eps, 2, fractional=False)+' seconds'
    else:
       dT = np.where(eps > 1, np.round(dT), np.where(eps > 0.1, np.round(dT,1), np.where(eps > 0.01, np.round(dT,2), np.round(dT,6))))
       return [str(dT[i])+u' \u00B1 '+np.format_float_positional(eps[i],2, fractional=False) for i in range(len(dT))]
