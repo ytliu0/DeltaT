@@ -2,7 +2,7 @@ import numpy as np
 
 # Constant arrays for cubic spline polynomials, 
 # see http://astro.ukho.gov.uk/nao/lvm/Table-S15.2020.txt
-# The coefficients after 2012 have been modified to include data after 2019.
+# The coefficients after 2013 have been modified to include data after 2019.
 y0 = np.array([-720, -100, 400, 1000, 1150, 1300, 1500, 1600, 1650, 1720, 1800,
              1810, 1820, 1830, 1840, 1850, 1855, 1860, 1865, 1870, 1875, 1880,
              1885, 1890, 1895, 1900, 1905, 1910, 1915, 1920, 1925, 1930, 1935,
@@ -60,6 +60,47 @@ eps_tab = np.array([1080, 720, 360, 180, 170, 160, 150, 130, 120, 110, 100, 90, 
            0.1, 0.05, 0.1, 1, 2, 4, 6, 10, 20, 30, 50, 100])
 nytab = len(ytab)
 
+def spline(y, y0=y0, y1=y1, a0=a0, a1=a1, a2=a2, a3=a3):
+    """
+    Calculate Delta T by cubic spline polynomial. 
+    y can be a scalar or a 1D numpy array.
+    """
+    i = np.searchsorted(y0, y, 'right')-1
+    t = (y - y0[i])/(y1[i]-y0[i])
+    return a0[i] + t*(a1[i] + t*(a2[i] + t*a3[i]))
+
+def integrated_lod(y, C):
+    """
+    Integrated lod (deviation of mean solar day from 86400s) equation from 
+    http://astro.ukho.gov.uk/nao/lvm/:
+    lod = 1.72 t − 3.5 sin(2*pi*(t+0.75)/14) in ms/day, where t = (y - 1825)/100
+    Using 1ms = 1e-3s and 1 Julian year = 365.25 days,
+    lod = 0.62823*t - 1.278375*sin(2*pi/14*(t + 0.75) in s/year
+    Integrate the equation gives
+    C + 31.4115*t^2 + 894.8625/pi*cos(2*pi/14*(t + 0.75))
+    in seconds. C is the integration constant.
+    y can be a scalar or a 1D numpy array.
+    """
+    t = 0.01*(y - 1825)
+    return C + 31.4115*t*t + 284.8435805251424*np.cos(0.4487989505128276*(t + 0.75))
+
+def initialize_IERS_variables(s):
+    data = np.loadtxt('DeltaT_IERS.csv', delimiter=',', skiprows=1)
+    if s > 1:
+       # reduce data 
+       n = data.shape[0]
+       data = data[range(0,n,s),:]
+    jd_beg = 2400000.5 + data[0,3]
+    jd_end = 2400000.5 + data[-1,3]
+    y = 2000 + (data[-1,3] - 51544)/365.2425
+    c = data[-1,6] - integrated_lod(y,0)
+    return jd_beg, jd_end, c, data[:,6], data[:,5]
+
+# Global variables for interpolating the IERS data file
+s_IERS = 1   # Number of days between two data points (if > 1, data will be reduced)
+jd_beg, jd_end, c_IERS, DeltaT_IERS, sigma = initialize_IERS_variables(s_IERS)
+nIERS = len(sigma)
+
 def DeltaT(y):
     """
     Compute Delta T using the fitting and extrapolation formulae by 
@@ -68,30 +109,6 @@ def DeltaT(y):
     The input y can be a scalar or a 1D array.
     Return Delta T in seconds. If y is a 1D array, Delta T is a 1D numpy array.
     """
-    def integrated_lod(y, C):
-        """
-        Integrated lod (deviation of mean solar day from 86400s) equation from 
-        http://astro.ukho.gov.uk/nao/lvm/:
-        lod = 1.72 t − 3.5 sin(2*pi*(t+0.75)/14) in ms/day, where t = (y - 1825)/100
-        Using 1ms = 1e-3s and 1 Julian year = 365.25 days,
-        lod = 0.62823*t - 1.278375*sin(2*pi/14*(t + 0.75) in s/year
-        Integrate the equation gives
-        C + 31.4115*t^2 + 894.8625/pi*cos(2*pi/14*(t + 0.75))
-        in seconds. C is the integration constant.
-        y can be a scalar or a 1D numpy array.
-        """
-        t = 0.01*(y - 1825)
-        return C + 31.4115*t*t + 284.8435805251424*np.cos(0.4487989505128276*(t + 0.75))
-
-    def spline(y):
-        """
-        Calculate Delta T by cubic spline polynomial. 
-        y can be a scalar or a 1D numpy array.
-        """
-        i = np.searchsorted(y0, y, 'right')-1
-        t = (y - y0[i])/(y1[i]-y0[i])
-        return a0[i] + t*(a1[i] + t*(a2[i] + t*a3[i]))
-
     if isinstance(y, (int,float)):
        if y < -720:
            return integrated_lod(y, c1)
@@ -161,4 +178,101 @@ def DeltaT_with_error_estimate(y):
            else:
              out[i] = str(round(dT[i]))+u' \u00B1 '+str(e)+' seconds'
        return out
+    
+def DeltaT_interpolate_IERS(jd):
+   """
+   Calculate Delta T by linear interpolating the IERS Delta T data.
+   If jd is out of range of the DeltaT_IERS array, return -99999.
+   """
+   if isinstance(jd, (int,float)):
+      d = (jd - jd_beg)/s_IERS
+      i = np.int_(d)
+      d -= np.floor(d)
+      dT = -99999
+      if jd >= jd_beg and jd < jd_end:
+        dT = DeltaT_IERS[i] + d*(DeltaT_IERS[i+1] - DeltaT_IERS[i])
+      return dT
+   jd = np.array(jd)
+   d = (jd - jd_beg)/s_IERS
+   i = np.int_(d)
+   d -= np.floor(d)
+   out_of_range = (jd < jd_beg) | (jd >= jd_end)
+   i = np.where(out_of_range, 0, i)
+   dT = DeltaT_IERS[i] + d*(DeltaT_IERS[i+1] - DeltaT_IERS[i])
+   return np.where(out_of_range, -99999, dT)
 
+def DeltaT_interpolate_IERS_error_estimate(jd):
+   """
+   Estimate the error of Delta T computed from DeltaT_interpolate_IERS(). 
+   If jd is out of range of the DeltaT_IERS array, return -99999.
+   """
+   if isinstance(jd, (int,float)):
+      i = np.int_((jd - jd_beg)/s_IERS)
+      eps = -99999
+      if jd >= jd_beg and jd < jd_end:
+        eps = max(0.5*np.abs(DeltaT_IERS[i+1] - DeltaT_IERS[i]), sigma[i])
+      return eps
+   jd = np.array(jd)
+   i = np.int_((jd - jd_beg)/s_IERS)
+   out_of_range = (jd < jd_beg) | (jd >= jd_end)
+   i = np.where(out_of_range, 0, i)
+   hd = 0.5*np.abs(DeltaT_IERS[i+1] - DeltaT_IERS[i])
+   eps = np.where(sigma[i] > hd, sigma[i], hd)
+   return np.where(out_of_range, -99999, eps)
+
+def jdy(jd):
+   """
+   Convert jd to y
+   """
+   if isinstance(jd, (int,float)):
+      return 2000 + (jd - 2451544.5)/365.2425 if jd >= 2299160.5 else (jd+0.5)/365.25 - 4712
+   return np.where(jd >= 2299160.5, 2000 + (jd - 2451544.5)/365.2425, (jd+0.5)/365.25 - 4712)
+
+def DeltaT_hybrid(jd):
+   """
+   Compute Delta T at Julian date jd using a hybrid method:
+   If jd is in the range of IERS Delta T table, compute Delta T by linear interpolating the IERS Delta T data.
+   If jd is outside the range of the IERS data, compute Delta T by cubic spline interpolation or extrapolation by the integrated lod.
+   """
+   if isinstance(jd, (int,float)):
+      if jd >= jd_end:
+         return integrated_lod(jdy(jd), c_IERS)
+      elif jd >= jd_beg:
+         return DeltaT_interpolate_IERS(jd)
+      else:
+         return DeltaT(jdy(jd))
+   else:
+      jd = np.array(jd)
+      y = jdy(jd)
+      return np.where(jd >= jd_end, integrated_lod(y, c_IERS), 
+               np.where(jd >= jd_beg, DeltaT_interpolate_IERS(jd), DeltaT(y)) )
+   
+def DeltaT_hybrid_error_estimate(jd):
+   if isinstance(jd, (int,float)):
+      if jd >= jd_end or jd < jd_beg:
+        return DeltaT_error_estimate(jdy(jd))
+      else:
+        return DeltaT_interpolate_IERS_error_estimate(jd)
+   else:
+    jd = np.array(jd)
+    y = jdy(jd)
+    return np.where((jd >= jd_end) | (jd < jd_beg),  DeltaT_error_estimate(y), 
+                    DeltaT_interpolate_IERS_error_estimate(jd))
+   
+def DeltaT_hybrid_with_error_estimate(jd):
+   dT = DeltaT_hybrid(jd)
+   eps = DeltaT_hybrid_error_estimate(jd)
+   if isinstance(jd, (int,float)):
+    if eps > 1:
+        dT = round(dT)
+    elif eps > 0.1:
+        dT = round(dT, 1)
+    elif eps > 0.01:
+        dT = round(dT, 2)
+    else:
+       dT = round(dT,6)
+    return str(dT)+u' \u00B1 '+np.format_float_positional(eps, 2)+' seconds'
+   else:
+      dT = np.where(eps > 1, np.round(dT), np.where(eps > 0.1, np.round(dT,1), np.where(eps > 0.01, np.round(dT,2), np.round(dT,6))))
+      return [str(dT[i])+u' \u00B1 '+np.format_float_positional(eps[i],2, fractional=False) for i in range(len(dT))]
+   
