@@ -1,6 +1,5 @@
 import numpy as np
 import DeltaT as DT
-from sklearn.linear_model import LinearRegression
 
 def regression_cubic_spline(y, DeltaT, a_in, knots):
     """
@@ -49,15 +48,16 @@ def regression_cubic_spline(y, DeltaT, a_in, knots):
     # Coefficients c_m can be computed by linear regression with 0 intercept.
     # Note that any values of c_m will not change the fitted z in the first interval, so we can 
     # remove data from the first interval.
-    t = t[y >= knots[1]]
-    z = DeltaT[y >= knots[1]] - a_in[0] - a_in[1]*t - a_in[2]*t*t - a_in[3]*t**3
+    t = t[y > knots[1]]
+    z = DeltaT[y > knots[1]] - a_in[0] - a_in[1]*t - a_in[2]*t*t - a_in[3]*t**3
     nc = len(knots)-2
-    # Set up the feature matrix
+    # Set up the features
     X = np.zeros((len(t), nc))
     m = (knots[1:(nc+1)] - knots[0])/dy
     for i in range(nc):
         X[:,i] = h(t, m[i])
-    reg = LinearRegression(fit_intercept=False).fit(X, z)
+    Xmax = np.max(X, axis=0)
+    reg_coef = np.linalg.lstsq(X/Xmax, z, rcond=None)[0]/Xmax
     # Now construct the coefficients of the cubic polynomials in the intervals 
     # between knots from the regression coefficients.
     # If f(x) = c0 + c1*(x-x0) + c2*(x-x0)^2 + c3*(x-x0)^3, then 
@@ -67,16 +67,16 @@ def regression_cubic_spline(y, DeltaT, a_in, knots):
     for i in range(nc):
         fac = (knots[i+2] - knots[i+1])/dy  # take into account of variable rescaling
         e = 1e-12    # a tiny number compared to m[i]
-        a[0,i+1] = a_in[0] + a_in[1]*m[i] + a_in[2]*m[i]**2 + a_in[3]*m[i]**3 + sum(reg.coef_*h(m[i]+e, m))
-        a[1,i+1] = fac*(a_in[1] + 2*a_in[2]*m[i] + 3*a_in[3]*m[i]**2 + sum(reg.coef_*hd(m[i]+e, m, 1)))
-        a[2,i+1] = fac*fac*(a_in[2] + 3*a_in[3]*m[i] + 0.5*sum(reg.coef_*hd(m[i]+e, m, 2)))
-        a[3,i+1] = fac*fac*fac*(a_in[3] + sum(reg.coef_*hd(m[i]+e, m, 3))/6)
+        a[0,i+1] = a_in[0] + a_in[1]*m[i] + a_in[2]*m[i]**2 + a_in[3]*m[i]**3 + sum(reg_coef*h(m[i]+e, m))
+        a[1,i+1] = fac*(a_in[1] + 2*a_in[2]*m[i] + 3*a_in[3]*m[i]**2 + sum(reg_coef*hd(m[i]+e, m, 1)))
+        a[2,i+1] = fac*fac*(a_in[2] + 3*a_in[3]*m[i] + 0.5*sum(reg_coef*hd(m[i]+e, m, 2)))
+        a[3,i+1] = fac*fac*fac*(a_in[3] + sum(reg_coef*hd(m[i]+e, m, 3))/6)
     y0 = knots[0:(nc+1)]
     y1 = knots[1:(nc+2)]
     a = np.round(a, 3)  # round a to 3 decimal places
 
     # Calculate the residuals of the fit
-    res = DT.spline(y, y0, y1, a[0,:], a[1,:], a[2,:], a[3,:]) - DeltaT
+    res = DeltaT - DT.spline(y, y0, y1, a[0,:], a[1,:], a[2,:], a[3,:])
     # Calculate the root mean square error of the cubic spline fit in the intervals between knots
     eps = np.zeros(nc+1)
     for i in range(nc+1):
