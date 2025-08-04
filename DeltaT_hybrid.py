@@ -9,7 +9,7 @@ def initialize_IERS_variables(s):
     jd_beg = 2400000.5 + data[0,3]
     jd_end = 2400000.5 + data[-1,3]
     y = 2000 + (data[-1,3] - 51544)/365.2425
-    c = data[-1,6] - integrated_lod(y,0)
+    c = data[-1,6] - integrated_lod(y,0,0)
     return jd_beg, jd_end, c, data[:,6], data[:,5]
 
 # Global variables for interpolating the IERS data file
@@ -66,7 +66,7 @@ def jdy(jd):
       return 2000 + (jd - 2451544.5)/365.2425 if jd >= 2299160.5 else (jd+0.5)/365.25 - 4712
    return np.where(jd >= 2299160.5, 2000 + (jd - 2451544.5)/365.2425, (jd+0.5)/365.25 - 4712)
 
-def DeltaT_hybrid(jd):
+def DeltaT_hybrid(jd, dalpha=0):
    """
    Compute Delta T at Julian date jd using a hybrid method:
    If jd is in the range of IERS Delta T table, compute Delta T by linear interpolating the IERS Delta T data.
@@ -74,7 +74,7 @@ def DeltaT_hybrid(jd):
    """
    if isinstance(jd, (int,float)):
       if jd >= jd_end:
-         return integrated_lod(jdy(jd), c_IERS)
+         return integrated_lod(jdy(jd), c_IERS, dalpha)
       elif jd >= jd_beg:
          return DeltaT_interpolate_IERS(jd)
       else:
@@ -82,7 +82,7 @@ def DeltaT_hybrid(jd):
    else:
       jd = np.array(jd)
       y = jdy(jd)
-      return np.where(jd >= jd_end, integrated_lod(y, c_IERS), 
+      return np.where(jd >= jd_end, integrated_lod(y, c_IERS, dalpha), 
                np.where(jd >= jd_beg, DeltaT_interpolate_IERS(jd), DeltaT(y)) )
    
 def DeltaT_hybrid_error_estimate(jd):
@@ -97,8 +97,8 @@ def DeltaT_hybrid_error_estimate(jd):
     return np.where((jd >= jd_end) | (jd < jd_beg),  DeltaT_error_estimate(y), 
                     DeltaT_interpolate_IERS_error_estimate(jd))
    
-def DeltaT_hybrid_with_error_estimate(jd):
-   dT = DeltaT_hybrid(jd)
+def DeltaT_hybrid_with_error_estimate(jd, dalpha=0):
+   dT = DeltaT_hybrid(jd, dalpha)
    eps = DeltaT_hybrid_error_estimate(jd)
    if isinstance(jd, (int,float)):
     if eps > 1:

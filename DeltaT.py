@@ -61,16 +61,21 @@ eps_tab = np.array([1080, 720, 360, 180, 170, 160, 150, 130, 120, 110, 100, 90, 
            0.1, 0.05, 0.1, 0.2, 1, 2, 4, 6, 10, 20, 30, 50, 100])
 nytab = len(ytab)
 
-def spline(y, y0=y0, y1=y1, a0=a0, a1=a1, a2=a2, a3=a3):
+def spline(y, dalpha, y0=y0, y1=y1, a0=a0, a1=a1, a2=a2, a3=a3):
     """
     Calculate Delta T by cubic spline polynomial. 
     y can be a scalar or a 1D numpy array.
     """
     i = np.searchsorted(y0, y, 'right')-1
     t = (y - y0[i])/(y1[i]-y0[i])
-    return a0[i] + t*(a1[i] + t*(a2[i] + t*a3[i]))
+    dt = a0[i] + t*(a1[i] + t*(a2[i] + t*a3[i]))
+    if dalpha != 0:
+        # add correction to Delta T as a result of using a different value of tidal acceleration
+        T = 0.01*y - 19.55
+        dt -= np.where(T < 0, 0.91072*dalpha*T*T, 0)
+    return dt
 
-def integrated_lod(y, C):
+def integrated_lod(y, C, dalpha):
     """
     Integrated lod (deviation of mean solar day from 86400s) equation from 
     http://astro.ukho.gov.uk/nao/lvm/:
@@ -83,26 +88,36 @@ def integrated_lod(y, C):
     y can be a scalar or a 1D numpy array.
     """
     t = 0.01*(y - 1825)
-    return C + 31.4115*t*t + 284.8435805251424*np.cos(0.4487989505128276*(t + 0.75))
+    dt = C + 31.4115*t*t + 284.8435805251424*np.cos(0.4487989505128276*(t + 0.75))
+    if dalpha != 0:
+        # add correction to Delta T as a result of using a different value of tidal acceleration
+        T2 = (0.01*y - 19.55)**2
+        Ts2 = (0.01*ys_end - 19.55)**2
+        offset = np.where(y > ys_end, Ts2, 0)
+        dt -= 0.91072*dalpha*(T2 - offset)
+    return dt
 
-def DeltaT(y):
+def DeltaT(y, dalpha=0):
     """
     Compute Delta T using the fitting and extrapolation formulae by 
     Stephenson et al (2016) and Morrison et al (2021). See 
     http://astro.ukho.gov.uk/nao/lvm/
     The input y can be a scalar or a 1D array.
+    dalpha is a parameter that allows the change in the default tidal acceleration.
+    The tidal acceleration adopted by Stephenson et al and Morrison et al is alpha = -25.82"/century^2.
+    dalpha = new tidal acceleration in "/century^2 - (-25.82)
     Return Delta T in seconds. If y is a 1D array, Delta T is a 1D numpy array.
     """
     if isinstance(y, (int,float)):
        if y < -720:
-           return integrated_lod(y, c1)
+           return integrated_lod(y, c1, dalpha)
        if y > ys_end:
-           return integrated_lod(y, c2)
-       return spline(y)
+           return integrated_lod(y, c2, dalpha)
+       return spline(y, dalpha)
     else:
        y = np.array(y)
-       return np.where(y < -720, integrated_lod(y, c1), 
-                       np.where(y <= ys_end, spline(y), integrated_lod(y, c2)) )
+       return np.where(y < -720, integrated_lod(y, c1, dalpha), 
+                       np.where(y <= ys_end, spline(y, dalpha), integrated_lod(y, c2, dalpha)) )
 
 def DeltaT_error_estimate(y):
     """
@@ -127,15 +142,18 @@ def DeltaT_error_estimate(y):
                        np.where(y < ytab[nytab-1], eps_tab[np.searchsorted(ytab, y, 'right')-1],
                          k2*(y-1875)**2) )
 
-def DeltaT_with_error_estimate(y):
+def DeltaT_with_error_estimate(y, dalpha=0):
     """
     Compute Delta T using the fitting and extrapolation formulae by 
     Stephenson et al (2016) and Morrison et al (2021) and provides an error estimate.
     The input y can be a scalar or a 1D array.
+    dalpha is a parameter that allows the change in the default tidal acceleration.
+    The tidal acceleration adopted by Stephenson et al and Morrison et al is alpha = -25.82"/century^2.
+    dalpha = new tidal acceleration in "/century^2 - (-25.82)
     Return a string if y is a scalar, and a 1D array of strings if y is a 1D array
     """
     if isinstance(y, (int,float)):
-       dT = DeltaT(y)
+       dT = DeltaT(y, dalpha)
        eps = DeltaT_error_estimate(y)
        if eps > 10:
            eps = round(eps)
@@ -150,7 +168,7 @@ def DeltaT_with_error_estimate(y):
     else:
        out = ['']*len(y)
        y = np.array(y)
-       dT = DeltaT(y)
+       dT = DeltaT(y, dalpha)
        eps = DeltaT_error_estimate(y)
        for i,e in enumerate(eps):
            if e > 10:

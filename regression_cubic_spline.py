@@ -76,7 +76,7 @@ def regression_cubic_spline(y, DeltaT, a_in, knots):
     a = np.round(a, 3)  # round a to 3 decimal places
 
     # Calculate the residuals of the fit
-    res = DeltaT - DT.spline(y, y0, y1, a[0,:], a[1,:], a[2,:], a[3,:])
+    res = DeltaT - DT.spline(y, 0, y0, y1, a[0,:], a[1,:], a[2,:], a[3,:])
     # Calculate the root mean square error of the cubic spline fit in the intervals between knots
     eps = np.zeros(nc+1)
     for i in range(nc+1):
@@ -85,7 +85,7 @@ def regression_cubic_spline(y, DeltaT, a_in, knots):
     # Delta T at the last knot
     DeltaT_last = sum(a[:,-1])
     # integration constant c2 for extrapolation using the integrated lod function for y > knots[-1]
-    c2 = DeltaT_last - DT.integrated_lod(knots[-1], 0)
+    c2 = DeltaT_last - DT.integrated_lod(knots[-1], 0, 0)
     spline = {'y0':y0, 'y1':y1, 'a0':a[0,:], 'a1':a[1,:], 'a2':a[2,:], 'a3':a[3,:], 'epsilon':eps}
     residuals = {'y':y, 'res':res}
     return spline, residuals, c2
